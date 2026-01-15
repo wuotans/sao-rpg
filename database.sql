@@ -28,10 +28,13 @@ CREATE TABLE characters (
     class VARCHAR(50) DEFAULT 'Swordsman',
     level INT DEFAULT 1,
     exp INT DEFAULT 0,
-    current_hp INT DEFAULT 100,
+    max_exp INT DEFAULT 100,          -- ADICIONADO
+    hp INT DEFAULT 100,               -- ADICIONADO
     max_hp INT DEFAULT 100,
-    current_mp INT DEFAULT 50,
+    current_hp INT DEFAULT 100,
+    mp INT DEFAULT 50,                -- ADICIONADO
     max_mp INT DEFAULT 50,
+    current_mp INT DEFAULT 50,
     atk INT DEFAULT 10,
     def INT DEFAULT 5,
     agi INT DEFAULT 8,

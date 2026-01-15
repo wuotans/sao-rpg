@@ -5,8 +5,8 @@ session_start();
 // Database Configuration
 define('DB_HOST', 'localhost');
 define('DB_NAME', 'sao_rpg');
-define('DB_USER', 'root');
-define('DB_PASS', '');
+define('DB_USER', 'master');
+define('DB_PASS', 'MPS2017');
 
 // Game Settings
 define('SITE_NAME', 'SAO RPG - Aincrad Online');
