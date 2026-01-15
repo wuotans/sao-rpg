@@ -35,6 +35,45 @@ function redirect($url) {
     exit();
 }
 
+// Initialize user session after login/register
+function initSession($user) {
+    $_SESSION['user_id'] = $user['id'];
+    $_SESSION['username'] = $user['username'];
+    $_SESSION['email'] = $user['email'];
+    $_SESSION['vip_expire'] = $user['vip_expire'];
+    $_SESSION['is_admin'] = isset($user['is_admin']) ? $user['is_admin'] : false;
+    
+    // Get character data
+    $db = Database::getInstance();
+    $character = $db->fetch("SELECT * FROM characters WHERE user_id = ?", [$user['id']]);
+    
+    if ($character) {
+        $_SESSION['character_id'] = $character['id'];
+        $_SESSION['character_name'] = $character['name'];
+        $_SESSION['character_class'] = $character['class'];
+        $_SESSION['level'] = $character['level'];
+        $_SESSION['exp'] = $character['exp'];
+        $_SESSION['max_exp'] = $character['max_exp'];
+        $_SESSION['hp'] = $character['hp'];
+        $_SESSION['max_hp'] = $character['max_hp'];
+        $_SESSION['current_hp'] = $character['current_hp'];
+        $_SESSION['mp'] = $character['mp'];
+        $_SESSION['max_mp'] = $character['max_mp'];
+        $_SESSION['current_mp'] = $character['current_mp'];
+        $_SESSION['atk'] = $character['atk'];
+        $_SESSION['def'] = $character['def'];
+        $_SESSION['agi'] = $character['agi'];
+        $_SESSION['crit'] = $character['crit'];
+        $_SESSION['gold'] = $character['gold'];
+        $_SESSION['credits'] = $character['credits'];
+        $_SESSION['current_floor'] = $character['current_floor'];
+        $_SESSION['energy'] = $character['energy'];
+        $_SESSION['energy_regen'] = $character['energy_regen'];
+        $_SESSION['avatar'] = $character['avatar'];
+        $_SESSION['created_at'] = $character['created_at'];
+    }
+}
+
 // Get player info
 function getPlayerInfo($user_id) {
     $db = Database::getInstance();
