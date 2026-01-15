@@ -1254,7 +1254,7 @@ $achievements = [
                         <?php echo htmlspecialchars($guild['name']); ?>
                         <span class="guild-tag">[<?php echo $guild['tag']; ?>]</span>
                         <span style="margin-left: auto; font-size: 0.9rem; color: #ce93d8;">
-                            <?php echo ucfirst($guild['rank']); ?>
+                            <?php echo ucfirst($guild['member_rank']); ?>
                         </span>
                     </div>
                     <p style="color: #bbdefb; margin: 10px 0;">

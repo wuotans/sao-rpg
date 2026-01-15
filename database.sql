@@ -258,18 +258,18 @@ CREATE TABLE guilds (
     INDEX idx_leader (leader_id)
 );
 
--- Guild members
+-- Guild members (CORRIGIDO: rank -> member_rank)
 CREATE TABLE guild_members (
     id INT PRIMARY KEY AUTO_INCREMENT,
     guild_id INT NOT NULL,
     user_id INT NOT NULL,
-    rank ENUM('leader', 'officer', 'member', 'recruit') DEFAULT 'recruit',
+    member_rank ENUM('leader', 'officer', 'member', 'recruit') DEFAULT 'recruit',
     joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     contribution INT DEFAULT 0,
     FOREIGN KEY (guild_id) REFERENCES guilds(id) ON DELETE CASCADE,
     FOREIGN KEY (user_id) REFERENCES users(id),
     UNIQUE KEY unique_member (guild_id, user_id),
-    INDEX idx_guild_members (guild_id, rank)
+    INDEX idx_guild_members (guild_id, member_rank)
 );
 
 -- Market (player-to-player trading)
