@@ -1,6 +1,6 @@
 <?php
 // Session Management
-function initSession($user_data) {
+function initUserSession($user_data) {
     $_SESSION['user_id'] = $user_data['id'];
     $_SESSION['username'] = $user_data['username'];
     $_SESSION['email'] = $user_data['email'];
@@ -38,7 +38,7 @@ function updateSession($user_id) {
     $user_data = $db->fetch("SELECT * FROM users WHERE id = ?", [$user_id]);
     
     if ($user_data) {
-        initSession($user_data);
+        initUserSession($user_data);
     }
 }
 

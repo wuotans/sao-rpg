@@ -1,4 +1,18 @@
 <?php
+// api/battle.php - VERSÃO COMPLETA COM SISTEMA DE 10+1 MONSTROS
+
+// Iniciar sessão PRIMEIRO
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
+// Verificar login
+if (!isset($_SESSION['user_id'])) {
+    echo json_encode(['error' => 'Not logged in']);
+    exit();
+}
+
+// Incluir arquivos
 require_once '../includes/config.php';
 require_once '../includes/functions.php';
 
@@ -27,6 +41,18 @@ switch($action) {
     case 'change_floor':
         changeFloor();
         break;
+    case 'next_monster':
+        nextMonster();
+        break;
+    case 'select_monster':
+        selectMonster();
+        break;
+    case 'reset_hp':
+        resetPlayerHP();
+        break;
+    case 'boss_defeat':
+        processBossDefeat();
+        break;
     default:
         echo json_encode(['error' => 'Invalid action']);
 }
@@ -42,14 +68,25 @@ function getMonster() {
         return;
     }
     
+    // Inicializar progresso do piso se não existir
+    if (!isset($_SESSION['monster_progress'][$floor])) {
+        $_SESSION['monster_progress'][$floor] = 1;
+    }
+    
+    $currentMonsterNumber = $_SESSION['monster_progress'][$floor];
+    
     // Get current monster from session or generate new one
-    if (!isset($_SESSION['current_monster']) || $_SESSION['current_monster']['floor'] != $floor) {
-        $_SESSION['current_monster'] = generateMonster($floor);
+    if (!isset($_SESSION['current_monster']) || 
+        $_SESSION['current_monster']['floor'] != $floor ||
+        $_SESSION['current_monster']['monster_number'] != $currentMonsterNumber) {
+        
+        $_SESSION['current_monster'] = generateSpecificMonster($floor, $currentMonsterNumber);
         $_SESSION['current_monster']['current_hp'] = $_SESSION['current_monster']['hp'];
+        $_SESSION['current_monster']['max_hp'] = $_SESSION['current_monster']['hp'];
     }
     
     // Add ID for reference
-    $_SESSION['current_monster']['id'] = 'monster_' . $floor;
+    $_SESSION['current_monster']['id'] = 'monster_' . $floor . '_' . $currentMonsterNumber;
     
     echo json_encode($_SESSION['current_monster']);
 }
@@ -74,7 +111,18 @@ function processAttack() {
     }
     
     $skill_id = isset($_POST['skill_id']) ? (int)$_POST['skill_id'] : 0;
-    $monster = $_SESSION['current_monster'] ?? generateMonster($player['current_floor']);
+    $floor = $_SESSION['current_floor'] ?? 1;
+    $currentMonsterNumber = $_SESSION['monster_progress'][$floor] ?? 1;
+    
+    // Get monster
+    if (!isset($_SESSION['current_monster'])) {
+        $_SESSION['current_monster'] = generateSpecificMonster($floor, $currentMonsterNumber);
+        $_SESSION['current_monster']['current_hp'] = $_SESSION['current_monster']['hp'];
+        $_SESSION['current_monster']['max_hp'] = $_SESSION['current_monster']['hp'];
+    }
+    
+    $monster = $_SESSION['current_monster'];
+    $isBoss = ($currentMonsterNumber == 11);
     
     $log = [];
     $drops = [];
@@ -106,6 +154,17 @@ function processAttack() {
             $gold_gained = round($gold_gained * VIP_GOLD_MULTIPLIER);
         }
         
+        // BOSS gives extra rewards
+        if ($isBoss) {
+            $exp_gained *= 2;
+            $gold_gained *= 3;
+            $log[] = [
+                'time' => date('H:i:s'),
+                'text' => "BOSS DEFEATED! Extra rewards received!",
+                'type' => 'victory'
+            ];
+        }
+        
         // Update player
         $new_exp = $player['exp'] + $exp_gained;
         
@@ -118,8 +177,9 @@ function processAttack() {
         // Update energy (deduct 1 for battle)
         $new_energy = max(0, $player['energy'] - 1);
         
-        // Get drops
-        $drops = getRandomDrop($player['current_floor'], $is_vip);
+        // Get drops - BOSS has better drop rate
+        $drop_multiplier = $isBoss ? 3 : 1;
+        $drops = getRandomDrop($player['current_floor'], $is_vip, $drop_multiplier);
         
         // Add drops to inventory
         foreach ($drops as $drop) {
@@ -137,10 +197,13 @@ function processAttack() {
         $db->insert('battles', [
             'user_id' => $user_id,
             'monster_name' => $monster['name'],
+            'monster_number' => $currentMonsterNumber,
+            'floor' => $floor,
             'result' => 'win',
             'exp_gained' => $exp_gained,
             'gold_gained' => $gold_gained,
             'items_dropped' => json_encode(array_column($drops, 'name')),
+            'is_boss' => $isBoss ? 1 : 0,
             'created_at' => date('Y-m-d H:i:s')
         ]);
         
@@ -159,6 +222,9 @@ function processAttack() {
             ];
         }
         
+        // Update monster progress
+        $_SESSION['monster_progress'][$floor] = $currentMonsterNumber + 1;
+        
         // Clear current monster
         unset($_SESSION['current_monster']);
         
@@ -170,6 +236,8 @@ function processAttack() {
             'drops' => $drops,
             'log' => $log,
             'level_up' => $level_up_result,
+            'is_boss' => $isBoss,
+            'next_monster_number' => $currentMonsterNumber + 1,
             'player' => [
                 'exp' => $new_exp,
                 'gold' => $new_gold,
@@ -209,23 +277,30 @@ function processAttack() {
         $db->insert('battles', [
             'user_id' => $user_id,
             'monster_name' => $monster['name'],
+            'monster_number' => $currentMonsterNumber,
+            'floor' => $floor,
             'result' => 'lose',
             'exp_gained' => 0,
             'gold_gained' => 0,
+            'is_boss' => $isBoss ? 1 : 0,
             'created_at' => date('Y-m-d H:i:s')
         ]);
         
-        // Reset player HP (send to hospital)
+        // Reset player HP to 10% (hospital)
+        $new_hp_after_defeat = round($player['max_hp'] * 0.1);
         $db->update('characters', [
-            'current_hp' => round($player['max_hp'] * 0.1) // 10% HP after defeat
+            'current_hp' => $new_hp_after_defeat
         ], 'user_id = ?', [$user_id]);
+        
+        // Update session
+        $_SESSION['current_hp'] = $new_hp_after_defeat;
         
         echo json_encode([
             'success' => true,
             'player_dead' => true,
             'log' => $log,
             'player' => [
-                'current_hp' => round($player['max_hp'] * 0.1),
+                'current_hp' => $new_hp_after_defeat,
                 'energy' => max(0, $player['energy'] - 1)
             ]
         ]);
@@ -274,7 +349,10 @@ function autoBattle() {
         return;
     }
     
-    $monster = $_SESSION['current_monster'] ?? generateMonster($player['current_floor']);
+    $floor = $_SESSION['current_floor'] ?? 1;
+    $currentMonsterNumber = $_SESSION['monster_progress'][$floor] ?? 1;
+    
+    $monster = $_SESSION['current_monster'] ?? generateSpecificMonster($floor, $currentMonsterNumber);
     $log = [];
     $drops = [];
     $level_up = null;
@@ -285,7 +363,7 @@ function autoBattle() {
     $total_gold = 0;
     $all_drops = [];
     
-    // Simulate 10 battles or until energy runs out
+    // Simulate battles or until energy runs out
     $battles_to_simulate = min(10, $player['energy']);
     
     for ($i = 0; $i < $battles_to_simulate; $i++) {
@@ -319,6 +397,25 @@ function autoBattle() {
             $db->update('characters', ['current_hp' => $new_hp], 'user_id = ?', [$user_id]);
             $player['current_hp'] = $new_hp;
         }
+        
+        // Update monster progress
+        $_SESSION['monster_progress'][$floor] = $currentMonsterNumber + 1;
+        $currentMonsterNumber++;
+        
+        // If passed monster 11, reset to 1 and increase floor progress
+        if ($currentMonsterNumber > 11) {
+            $currentMonsterNumber = 1;
+            
+            // Check if this was a boss defeat
+            if ($i == $battles_to_simulate - 1) {
+                // Last battle was a boss
+                $log[] = [
+                    'time' => date('H:i:s'),
+                    'text' => "BOSS defeated! Floor completed!",
+                    'type' => 'victory'
+                ];
+            }
+        }
     }
     
     // Update player stats
@@ -337,12 +434,15 @@ function autoBattle() {
     
     // Record battles
     for ($i = 0; $i < $battles_won; $i++) {
+        $isBossBattle = ($currentMonsterNumber + $i == 11) ? 1 : 0;
         $db->insert('battles', [
             'user_id' => $user_id,
             'monster_name' => $monster['name'],
+            'floor' => $floor,
             'result' => 'win',
             'exp_gained' => round($total_exp / $battles_won),
             'gold_gained' => round($total_gold / $battles_won),
+            'is_boss' => $isBossBattle,
             'created_at' => date('Y-m-d H:i:s')
         ]);
     }
@@ -398,13 +498,11 @@ function autoBattle() {
 }
 
 function processVictory() {
-    // Already handled in processAttack
-    echo json_encode(['success' => true]);
+    echo json_encode(['success' => true, 'message' => 'Victory processed']);
 }
 
 function processDefeat() {
-    // Already handled in processAttack
-    echo json_encode(['success' => true]);
+    echo json_encode(['success' => true, 'message' => 'Defeat processed']);
 }
 
 function processFlee() {
@@ -430,7 +528,9 @@ function processFlee() {
     } else {
         // Take damage when fleeing fails
         $player = $db->fetch("SELECT * FROM characters WHERE user_id = ?", [$user_id]);
-        $monster = $_SESSION['current_monster'] ?? generateMonster($player['current_floor']);
+        $floor = $_SESSION['current_floor'] ?? 1;
+        $currentMonsterNumber = $_SESSION['monster_progress'][$floor] ?? 1;
+        $monster = $_SESSION['current_monster'] ?? generateSpecificMonster($floor, $currentMonsterNumber);
         
         $damage = rand(5, 15);
         $new_hp = max(1, $player['current_hp'] - $damage);
@@ -471,13 +571,178 @@ function changeFloor() {
     $_SESSION['current_floor'] = $floor;
     $db->update('characters', ['current_floor' => $floor], 'user_id = ?', [$user_id]);
     
+    // Reset monster progress for this floor if not already set
+    if (!isset($_SESSION['monster_progress'][$floor])) {
+        $_SESSION['monster_progress'][$floor] = 1;
+    }
+    
     // Clear current monster for new floor
     unset($_SESSION['current_monster']);
     
     echo json_encode([
         'success' => true,
         'message' => 'Moved to floor ' . $floor,
-        'floor' => $floor
+        'floor' => $floor,
+        'monster_progress' => $_SESSION['monster_progress'][$floor]
+    ]);
+}
+
+function nextMonster() {
+    $floor = $_SESSION['current_floor'] ?? 1;
+    
+    // Increment monster progress
+    if (!isset($_SESSION['monster_progress'][$floor])) {
+        $_SESSION['monster_progress'][$floor] = 1;
+    }
+    
+    $currentMonsterNumber = $_SESSION['monster_progress'][$floor];
+    $nextMonsterNumber = $currentMonsterNumber + 1;
+    
+    // Check if we defeated the boss (monster 11)
+    $bossDefeated = false;
+    if ($currentMonsterNumber == 11) {
+        $bossDefeated = true;
+        
+        // Unlock next floor if current floor < max floor
+        $db = Database::getInstance();
+        $player = $db->fetch("SELECT * FROM characters WHERE user_id = ?", [$_SESSION['user_id']]);
+        $maxFloor = $player['current_floor'];
+        
+        if ($floor == $maxFloor) {
+            $newFloor = $floor + 1;
+            $db->update('characters', 
+                ['current_floor' => $newFloor], 
+                'user_id = ?', 
+                [$_SESSION['user_id']]
+            );
+            $_SESSION['current_floor'] = $newFloor;
+        }
+        
+        // Reset to monster 1 for the current floor
+        $nextMonsterNumber = 1;
+    }
+    
+    // If next monster is beyond 11, reset to 1
+    if ($nextMonsterNumber > 11) {
+        $nextMonsterNumber = 1;
+    }
+    
+    $_SESSION['monster_progress'][$floor] = $nextMonsterNumber;
+    
+    // Generate new monster
+    $monster = generateSpecificMonster($floor, $nextMonsterNumber);
+    $_SESSION['current_monster'] = $monster;
+    $_SESSION['current_monster']['current_hp'] = $monster['hp'];
+    $_SESSION['current_monster']['max_hp'] = $monster['hp'];
+    
+    echo json_encode([
+        'success' => true,
+        'monster_number' => $nextMonsterNumber,
+        'monster' => $monster,
+        'is_boss' => ($nextMonsterNumber == 11),
+        'boss_defeated' => $bossDefeated,
+        'message' => $bossDefeated ? 'BOSS DEFEATED! Next floor unlocked!' : 'Next monster loaded'
+    ]);
+}
+
+function selectMonster() {
+    $floor = $_SESSION['current_floor'] ?? 1;
+    $monsterNumber = isset($_POST['monster_number']) ? (int)$_POST['monster_number'] : 1;
+    
+    // Validar número do monstro (1-11)
+    if ($monsterNumber < 1 || $monsterNumber > 11) {
+        echo json_encode(['success' => false, 'message' => 'Invalid monster number']);
+        return;
+    }
+    
+    // Check if monster is unlocked (can only select up to current progress)
+    $currentProgress = $_SESSION['monster_progress'][$floor] ?? 1;
+    if ($monsterNumber > $currentProgress) {
+        echo json_encode([
+            'success' => false, 
+            'message' => 'Monster not unlocked yet! Defeat previous monsters first.'
+        ]);
+        return;
+    }
+    
+    // Generate specific monster
+    $monster = generateSpecificMonster($floor, $monsterNumber);
+    $_SESSION['current_monster'] = $monster;
+    $_SESSION['current_monster']['current_hp'] = $monster['hp'];
+    $_SESSION['current_monster']['max_hp'] = $monster['hp'];
+    
+    echo json_encode([
+        'success' => true,
+        'monster' => $monster,
+        'is_boss' => ($monsterNumber == 11),
+        'message' => 'Selected monster #' . $monsterNumber
+    ]);
+}
+
+function resetPlayerHP() {
+    global $db;
+    
+    $user_id = $_SESSION['user_id'];
+    
+    // Carregar jogador
+    $player = $db->fetch("SELECT * FROM characters WHERE user_id = ?", [$user_id]);
+    
+    if (!$player) {
+        echo json_encode(['success' => false, 'message' => 'Player not found']);
+        return;
+    }
+    
+    // Resetar HP para 10% do máximo (quando morre)
+    $new_hp = round($player['max_hp'] * 0.1);
+    
+    $db->update('characters', 
+        ['current_hp' => $new_hp], 
+        'user_id = ?', 
+        [$user_id]
+    );
+    
+    // Atualizar sessão
+    $_SESSION['current_hp'] = $new_hp;
+    
+    echo json_encode([
+        'success' => true,
+        'new_hp' => $new_hp,
+        'message' => 'HP reset after defeat'
+    ]);
+}
+
+function processBossDefeat() {
+    global $db;
+    
+    $user_id = $_SESSION['user_id'];
+    $floor = $_SESSION['current_floor'] ?? 1;
+    
+    // Unlock next floor
+    $player = $db->fetch("SELECT * FROM characters WHERE user_id = ?", [$user_id]);
+    $newFloor = $player['current_floor'] + 1;
+    
+    $db->update('characters', 
+        ['current_floor' => $newFloor], 
+        'user_id = ?', 
+        [$user_id]
+    );
+    
+    $_SESSION['current_floor'] = $newFloor;
+    
+    // Reset monster progress for new floor
+    $_SESSION['monster_progress'][$newFloor] = 1;
+    
+    // Give special boss reward
+    $bossReward = getBossReward($floor);
+    if ($bossReward) {
+        addItemToInventory($user_id, $bossReward['id'], 1);
+    }
+    
+    echo json_encode([
+        'success' => true,
+        'new_floor' => $newFloor,
+        'boss_reward' => $bossReward,
+        'message' => 'BOSS DEFEATED! Floor ' . $floor . ' completed! Floor ' . $newFloor . ' unlocked!'
     ]);
 }
 
@@ -507,5 +772,102 @@ function addItemToInventory($user_id, $item_id, $quantity = 1) {
             'added_at' => date('Y-m-d H:i:s')
         ]);
     }
+}
+
+// Generate specific monster for floor and number
+function generateSpecificMonster($floor, $monsterNumber) {
+    $isBoss = ($monsterNumber == 11);
+    
+    // Lista de monstros por piso
+    $monsters = [
+        1 => [
+            'Frenzy Boar', 'Dire Wolf', 'Kobold Trooper', 'Goblin Scout', 
+            'Lesser Bat', 'Wild Dog', 'Cave Rat', 'Forest Spider',
+            'Swamp Slime', 'Rock Golem', 'Floor 1 Boss: Giant Boar King'
+        ],
+        2 => [
+            'Kobold Sentinel', 'Goblin Warrior', 'Cave Bear', 'Giant Spider',
+            'Skeleton Soldier', 'Zombie', 'Ghost', 'Wraith',
+            'Shadow Wolf', 'Stone Guardian', 'Floor 2 Boss: Kobold King'
+        ],
+        3 => [
+            'Orc Warrior', 'Troll', 'Harpy', 'Minotaur',
+            'Cyclops', 'Basilisk', 'Chimera', 'Hydra',
+            'Griffin', 'Dragon Whelp', 'Floor 3 Boss: Troll King'
+        ],
+        4 => [
+            'Dark Knight', 'Death Knight', 'Lich', 'Vampire',
+            'Werewolf', 'Banshee', 'Specter', 'Phantom',
+            'Wight', 'Mummy', 'Floor 4 Boss: Vampire Lord'
+        ],
+        5 => [
+            'Fire Elemental', 'Water Elemental', 'Earth Elemental', 'Air Elemental',
+            'Lightning Elemental', 'Ice Elemental', 'Shadow Elemental', 'Light Elemental',
+            'Chaos Elemental', 'Void Elemental', 'Floor 5 Boss: Elemental Lord'
+        ]
+    ];
+    
+    // Usar lista padrão se piso não existir
+    $floorMonsters = $monsters[$floor] ?? $monsters[1];
+    $monsterName = $floorMonsters[$monsterNumber - 1] ?? 'Unknown Monster';
+    
+    // Stats base
+    $baseHP = 50 + ($floor * 20) + ($monsterNumber * 10);
+    $baseATK = 8 + ($floor * 3) + round($monsterNumber / 2);
+    $baseDEF = 3 + $floor + round($monsterNumber / 3);
+    $baseEXP = 10 + ($floor * 8) + ($monsterNumber * 2);
+    $baseGOLD = 5 + ($floor * 5) + $monsterNumber;
+    
+    // Boss gets bonus stats
+    if ($isBoss) {
+        $baseHP *= 3;
+        $baseATK *= 2;
+        $baseDEF *= 2;
+        $baseEXP *= 5;
+        $baseGOLD *= 10;
+    }
+    
+    return [
+        'id' => 'monster_' . $floor . '_' . $monsterNumber,
+        'name' => $monsterName,
+        'floor' => $floor,
+        'monster_number' => $monsterNumber,
+        'hp' => $baseHP,
+        'max_hp' => $baseHP,
+        'current_hp' => $baseHP,
+        'atk' => $baseATK,
+        'def' => $baseDEF,
+        'exp' => $baseEXP,
+        'gold' => $baseGOLD,
+        'is_boss' => $isBoss
+    ];
+}
+
+// Get special boss reward
+function getBossReward($floor) {
+    $db = Database::getInstance();
+    
+    // Boss rewards by floor
+    $bossRewards = [
+        1 => ['name' => 'Boar King Trophy', 'type' => 'trophy', 'rarity' => 'rare'],
+        2 => ['name' => 'Kobold King Armor', 'type' => 'armor', 'rarity' => 'rare'],
+        3 => ['name' => 'Troll King Hammer', 'type' => 'weapon', 'rarity' => 'epic'],
+        4 => ['name' => 'Vampire Lord Cloak', 'type' => 'armor', 'rarity' => 'epic'],
+        5 => ['name' => 'Elemental Lord Staff', 'type' => 'weapon', 'rarity' => 'legendary']
+    ];
+    
+    $reward = $bossRewards[$floor] ?? null;
+    
+    if ($reward) {
+        // Check if item exists in database
+        $item = $db->fetch("SELECT * FROM items WHERE name = ? AND rarity = ?", 
+            [$reward['name'], $reward['rarity']]);
+        
+        if ($item) {
+            return $item;
+        }
+    }
+    
+    return null;
 }
 ?>

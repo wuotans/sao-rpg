@@ -1,10 +1,17 @@
 <?php
+// pages/battle.php - VERSÃO CORRIGIDA E MELHORADA
+
 require_once '../includes/config.php';
 require_once '../includes/functions.php';
 require_once '../includes/session.php';
 
 // Require login
 requireLogin();
+
+// Iniciar sessão se não estiver
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
 
 // Get current floor
 $floor = $_SESSION['current_floor'] ?? 1;
@@ -13,8 +20,26 @@ $floor = $_SESSION['current_floor'] ?? 1;
 $db = Database::getInstance();
 $player = $db->fetch("SELECT * FROM characters WHERE user_id = ?", [$_SESSION['user_id']]);
 
-// Generate monster for this floor
+if (!$player) {
+    header('Location: create_character.php');
+    exit();
+}
+
+// Gerar monstro para o piso atual
 $monster = generateMonster($floor);
+
+// Se não tiver monstro na sessão, criar um
+if (!isset($_SESSION['current_monster']) || $_SESSION['current_monster']['floor'] != $floor) {
+    $_SESSION['current_monster'] = $monster;
+    $_SESSION['current_monster']['current_hp'] = $monster['hp'];
+    $_SESSION['current_monster']['max_hp'] = $monster['hp'];
+}
+
+// Verificar se jogador está morto
+if ($player['current_hp'] <= 0) {
+    header('Location: town.php?action=hospital');
+    exit();
+}
 ?>
 <!DOCTYPE html>
 <html lang="pt-BR">
@@ -250,6 +275,63 @@ $monster = generateMonster($floor);
             background: rgba(41, 121, 255, 0.9);
             transform: scale(1.1);
         }
+        
+        /* Estilo para lista de monstros por piso */
+        .floor-monsters {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+            gap: 10px;
+            margin: 20px 0;
+            padding: 15px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 10px;
+        }
+        
+        .monster-slot {
+            text-align: center;
+            padding: 10px;
+            background: rgba(0, 0, 0, 0.5);
+            border-radius: 5px;
+            border: 1px solid #444;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .monster-slot:hover {
+            border-color: #00b0ff;
+            transform: translateY(-2px);
+        }
+        
+        .monster-slot.current {
+            border-color: #ffd740;
+            background: rgba(255, 215, 64, 0.1);
+        }
+        
+        .monster-slot.defeated {
+            opacity: 0.6;
+            border-color: #4CAF50;
+        }
+        
+        .monster-slot.boss {
+            border-color: #f44336;
+            background: rgba(244, 67, 54, 0.1);
+        }
+        
+        .monster-number {
+            font-size: 0.8rem;
+            color: #aaa;
+        }
+        
+        .monster-name-small {
+            font-size: 0.9rem;
+            margin: 5px 0;
+        }
+        
+        .boss-label {
+            color: #f44336;
+            font-weight: bold;
+            font-size: 0.8rem;
+        }
     </style>
 </head>
 <body class="sao-theme">
@@ -287,10 +369,45 @@ $monster = generateMonster($floor);
                 </div>
             <?php endif; ?>
             
+            <!-- Lista de monstros do piso -->
+            <div class="floor-monsters">
+                <?php
+                // Gerar lista de 10 monstros + 1 boss
+                for ($i = 1; $i <= 11; $i++):
+                    $isCurrent = ($i == ($_SESSION['monster_progress'][$floor] ?? 1));
+                    $isDefeated = isset($_SESSION['monster_progress'][$floor]) && $i < $_SESSION['monster_progress'][$floor];
+                    $isBoss = ($i == 11);
+                    
+                    $monsterName = $isBoss ? 'Floor Boss' : generateMonsterName($floor, $i);
+                    $monsterClass = '';
+                    if ($isBoss) $monsterClass = 'boss';
+                    elseif ($isCurrent) $monsterClass = 'current';
+                    elseif ($isDefeated) $monsterClass = 'defeated';
+                ?>
+                <div class="monster-slot <?php echo $monsterClass; ?>" 
+                     onclick="selectMonster(<?php echo $i; ?>)"
+                     title="<?php echo $isBoss ? 'Floor Boss - Special Rewards' : 'Monster ' . $i; ?>">
+                    <div class="monster-number">
+                        <?php if ($isBoss): ?>
+                            <span class="boss-label">BOSS</span>
+                        <?php else: ?>
+                            #<?php echo $i; ?>
+                        <?php endif; ?>
+                    </div>
+                    <div class="monster-name-small">
+                        <?php echo $monsterName; ?>
+                    </div>
+                    <?php if ($isDefeated): ?>
+                        <i class="fas fa-check" style="color: #4CAF50;"></i>
+                    <?php endif; ?>
+                </div>
+                <?php endfor; ?>
+            </div>
+            
             <!-- Battle Arena -->
             <div class="battle-header">
                 <h2><i class="fas fa-crosshairs"></i> Battle Arena</h2>
-                <p class="floor-indicator">Current Floor: <strong><?php echo $floor; ?></strong></p>
+                <p class="floor-indicator">Current Floor: <strong><?php echo $floor; ?></strong> | Monster: <strong id="current-monster-number">1</strong>/11</p>
             </div>
             
             <div class="battle-arena" id="battleArena">
@@ -323,7 +440,7 @@ $monster = generateMonster($floor);
                     <div class="stat-values">
                         <span class="player-stat" id="player-hp"><?php echo $player['current_hp']; ?>/<?php echo $player['max_hp']; ?></span>
                         <span class="vs-stat">VS</span>
-                        <span class="monster-stat" id="monster-hp"><?php echo $monster['current_hp']; ?>/<?php echo $monster['max_hp']; ?></span>
+                        <span class="monster-stat" id="monster-hp"><?php echo $_SESSION['current_monster']['current_hp']; ?>/<?php echo $_SESSION['current_monster']['max_hp']; ?></span>
                     </div>
                 </div>
             </div>
@@ -335,16 +452,16 @@ $monster = generateMonster($floor);
             
             <!-- Battle Controls -->
             <div class="battle-controls" id="battleControls">
-                <button class="battle-btn attack-btn" onclick="combatSystem.basicAttack()">
+                <button class="battle-btn attack-btn" onclick="performAttack()">
                     <i class="fas fa-swords"></i> Basic Attack
                 </button>
-                <button class="battle-btn defend-btn" onclick="combatSystem.defend()">
+                <button class="battle-btn defend-btn" onclick="performDefend()">
                     <i class="fas fa-shield-alt"></i> Defend
                 </button>
-                <button class="battle-btn flee-btn" onclick="combatSystem.flee()">
+                <button class="battle-btn flee-btn" onclick="performFlee()">
                     <i class="fas fa-running"></i> Flee
                 </button>
-                <button class="battle-btn auto-btn" onclick="combatSystem.toggleAutoBattle()">
+                <button class="battle-btn auto-btn" onclick="toggleAutoBattle()">
                     <i class="fas fa-robot"></i> Auto Battle
                 </button>
             </div>
@@ -377,8 +494,12 @@ $monster = generateMonster($floor);
                     </button>
                 <?php endif; ?>
                 
-                <?php for ($i = max(1, $floor - 2); $i <= min(10, $floor + 2); $i++): ?>
-                    <?php if ($i != $floor): ?>
+                <?php 
+                // Mostrar pisos disponíveis (1-10 ou até o máximo desbloqueado)
+                $maxFloor = min(10, $player['current_floor']);
+                for ($i = max(1, $floor - 2); $i <= min($maxFloor, $floor + 2); $i++):
+                    if ($i != $floor):
+                ?>
                         <button class="floor-btn" onclick="changeFloor(<?php echo $i; ?>)">
                             Floor <?php echo $i; ?>
                         </button>
@@ -389,7 +510,7 @@ $monster = generateMonster($floor);
                     <?php endif; ?>
                 <?php endfor; ?>
                 
-                <?php if ($floor < 10): ?>
+                <?php if ($floor < $maxFloor): ?>
                     <button class="floor-btn" onclick="changeFloor(<?php echo $floor + 1; ?>)">
                         Floor <?php echo $floor + 1; ?> <i class="fas fa-arrow-right"></i>
                     </button>
@@ -406,6 +527,14 @@ $monster = generateMonster($floor);
             <div class="help-content">
                 <h3>Combat Basics</h3>
                 <p>Battles in SAO RPG are turn-based. You and the monster take turns attacking.</p>
+                
+                <h3>Piso System</h3>
+                <ul>
+                    <li>Each floor has 10 regular monsters + 1 boss</li>
+                    <li>Defeat all 11 to unlock the next floor</li>
+                    <li>Bosses drop special rewards (equipment, skills)</li>
+                    <li>You can replay any floor you've unlocked</li>
+                </ul>
                 
                 <h3>Actions</h3>
                 <ul>
@@ -430,7 +559,7 @@ $monster = generateMonster($floor);
                 <ul>
                     <li>Experience Points (EXP)</li>
                     <li>Gold</li>
-                    <li>Chance to drop items</li>
+                    <li>Chance to drop items (bosses have better drops)</li>
                 </ul>
             </div>
         </div>
@@ -442,6 +571,11 @@ $monster = generateMonster($floor);
     </div>
     
     <script>
+        // Variáveis globais
+        let autoBattleActive = false;
+        let autoBattleInterval;
+        let currentMonsterNumber = <?php echo $_SESSION['monster_progress'][$floor] ?? 1; ?>;
+        
         // Initialize combat system
         $(document).ready(function() {
             // Get player and monster data
@@ -456,27 +590,514 @@ $monster = generateMonster($floor);
                 atk: <?php echo $player['atk']; ?>,
                 def: <?php echo $player['def']; ?>,
                 crit: <?php echo $player['crit']; ?>,
-                avatar: '<?php echo $_SESSION['avatar']; ?>'
+                avatar: '<?php echo $_SESSION['avatar']; ?>',
+                energy: <?php echo $player['energy']; ?>
             };
             
             const monster = {
-                id: 'monster_<?php echo $floor; ?>',
-                name: '<?php echo $monster['name']; ?>',
+                id: 'monster_<?php echo $floor; ?>_<?php echo $_SESSION['monster_progress'][$floor] ?? 1; ?>',
+                name: '<?php echo $_SESSION['current_monster']['name']; ?>',
                 floor: <?php echo $floor; ?>,
-                current_hp: <?php echo $monster['hp']; ?>,
-                max_hp: <?php echo $monster['hp']; ?>,
-                atk: <?php echo $monster['atk']; ?>,
-                def: <?php echo $monster['def']; ?>,
-                exp: <?php echo $monster['exp']; ?>,
-                gold: <?php echo $monster['gold']; ?>
+                current_hp: <?php echo $_SESSION['current_monster']['current_hp']; ?>,
+                max_hp: <?php echo $_SESSION['current_monster']['max_hp']; ?>,
+                atk: <?php echo $_SESSION['current_monster']['atk']; ?>,
+                def: <?php echo $_SESSION['current_monster']['def']; ?>,
+                exp: <?php echo $_SESSION['current_monster']['exp']; ?>,
+                gold: <?php echo $_SESSION['current_monster']['gold']; ?>,
+                is_boss: <?php echo (($_SESSION['monster_progress'][$floor] ?? 1) == 11) ? 'true' : 'false'; ?>
             };
             
+            // Atualizar número do monstro atual
+            $('#current-monster-number').text(currentMonsterNumber);
+            
             // Initialize combat
-            combatSystem.init(player, monster);
+            initCombat(player, monster);
             
             // Start energy warning check
             setInterval(checkEnergy, 30000);
         });
+        
+        // Inicializar sistema de combate
+        function initCombat(player, monster) {
+            // Renderizar arena
+            renderArena(player, monster);
+            addLog(`Battle started against ${monster.name}!`, 'system');
+            
+            // Carregar habilidades
+            loadSkills();
+        }
+        
+        // Renderizar arena
+        function renderArena(player, monster) {
+            const arenaHTML = `
+                <div class="arena-content">
+                    <div class="combatant player">
+                        <div class="combatant-avatar" style="background-image: url('../images/avatars/${player.avatar}')"></div>
+                        <div class="combatant-name">${player.username}</div>
+                        <div class="combatant-level">Level ${player.level}</div>
+                        
+                        <div class="combatant-stats">
+                            <div class="stat-bar">
+                                <div class="stat-label">HP</div>
+                                <div class="bar-container">
+                                    <div class="bar-fill hp-bar" style="width: ${(player.current_hp / player.max_hp) * 100}%"></div>
+                                </div>
+                                <div class="stat-value">${player.current_hp}/${player.max_hp}</div>
+                            </div>
+                            
+                            <div class="stat-bar">
+                                <div class="stat-label">MP</div>
+                                <div class="bar-container">
+                                    <div class="bar-fill mp-bar" style="width: ${(player.current_mp / player.max_mp) * 100}%"></div>
+                                </div>
+                                <div class="stat-value">${player.current_mp}/${player.max_mp}</div>
+                            </div>
+                            
+                            <div class="quick-stats">
+                                <div>Energy: ${player.energy}</div>
+                                <div>ATK: ${player.atk} | DEF: ${player.def} | CRIT: ${player.crit}%</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="vs-separator">
+                        <span>VS</span>
+                    </div>
+                    
+                    <div class="combatant monster">
+                        <div class="combatant-avatar" style="background-image: url('../images/monsters/monster_${monster.floor}.png')"></div>
+                        <div class="combatant-name">${monster.name}</div>
+                        <div class="combatant-level">Floor ${monster.floor} ${monster.is_boss ? '(BOSS)' : ''}</div>
+                        
+                        <div class="combatant-stats">
+                            <div class="stat-bar">
+                                <div class="stat-label">HP</div>
+                                <div class="bar-container">
+                                    <div class="bar-fill hp-bar" style="width: ${(monster.current_hp / monster.max_hp) * 100}%"></div>
+                                </div>
+                                <div class="stat-value">${monster.current_hp}/${monster.max_hp}</div>
+                            </div>
+                            
+                            <div class="quick-stats">
+                                <div>ATK: ${monster.atk} | DEF: ${monster.def}</div>
+                                <div>Reward: ${monster.exp} EXP, ${monster.gold} Gold</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            $('#battleArena').html(arenaHTML);
+        }
+        
+        // Carregar habilidades
+        function loadSkills() {
+            $.ajax({
+                url: '../api/player.php?action=get_skills',
+                method: 'GET',
+                success: function(data) {
+                    try {
+                        const skills = JSON.parse(data);
+                        renderSkills(skills);
+                    } catch (e) {
+                        console.error('Error loading skills:', e);
+                        renderSkills([]);
+                    }
+                },
+                error: function() {
+                    renderSkills([]);
+                }
+            });
+        }
+        
+        function renderSkills(skills) {
+            const container = $('#skillsContainer');
+            
+            if (!skills || skills.length === 0) {
+                container.html(`
+                    <div class="no-skills">
+                        <p>No skills available.</p>
+                        <p><small>Visit the skill trainer in town to learn new skills!</small></p>
+                    </div>
+                `);
+                return;
+            }
+            
+            let html = '<div class="skills-grid">';
+            skills.forEach(skill => {
+                html += `
+                    <div class="skill-card" onclick="useSkill(${skill.id})">
+                        <div class="skill-icon">
+                            <i class="fas ${getSkillIcon(skill.type)}"></i>
+                        </div>
+                        <div class="skill-info">
+                            <div class="skill-name">${skill.name}</div>
+                            <div class="skill-description">${skill.description}</div>
+                            <div class="skill-cost">
+                                <i class="fas fa-bolt"></i> ${skill.mp_cost} MP
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+            html += '</div>';
+            
+            container.html(html);
+        }
+        
+        function getSkillIcon(type) {
+            switch(type) {
+                case 'attack': return 'fa-swords';
+                case 'heal': return 'fa-heart';
+                case 'buff': return 'fa-arrow-up';
+                case 'debuff': return 'fa-arrow-down';
+                default: return 'fa-star';
+            }
+        }
+        
+        // Ataque básico
+        function performAttack() {
+            if (autoBattleActive) return;
+            
+            $.ajax({
+                url: '../api/battle.php?action=attack',
+                method: 'POST',
+                data: { skill_id: 0 },
+                success: function(data) {
+                    try {
+                        const result = JSON.parse(data);
+                        handleBattleResult(result);
+                    } catch (e) {
+                        console.error('Error in attack:', e);
+                        addLog('Error in battle system', 'system');
+                    }
+                },
+                error: function() {
+                    addLog('Failed to connect to battle server', 'system');
+                }
+            });
+        }
+        
+        // Defender
+        function performDefend() {
+            if (autoBattleActive) return;
+            
+            addLog('You take a defensive stance!', 'player');
+            // Implementar lógica de defesa
+        }
+        
+        // Usar habilidade
+        function useSkill(skillId) {
+            if (autoBattleActive) return;
+            
+            $.ajax({
+                url: '../api/battle.php?action=attack',
+                method: 'POST',
+                data: { skill_id: skillId },
+                success: function(data) {
+                    try {
+                        const result = JSON.parse(data);
+                        handleBattleResult(result);
+                    } catch (e) {
+                        console.error('Error using skill:', e);
+                        addLog('Error using skill', 'system');
+                    }
+                }
+            });
+        }
+        
+        // Fugir
+        function performFlee() {
+            if (confirm('Are you sure you want to flee from battle?')) {
+                $.ajax({
+                    url: '../api/battle.php?action=flee',
+                    method: 'POST',
+                    success: function(data) {
+                        try {
+                            const result = JSON.parse(data);
+                            if (result.success) {
+                                addLog('Successfully fled from battle!', 'system');
+                                setTimeout(() => {
+                                    window.location.href = 'map.php';
+                                }, 1500);
+                            } else {
+                                addLog(result.message || 'Failed to flee!', 'system');
+                                if (result.new_hp) {
+                                    updatePlayerHP(result.new_hp);
+                                }
+                            }
+                        } catch (e) {
+                            console.error('Error fleeing:', e);
+                        }
+                    }
+                });
+            }
+        }
+        
+        // Batalha automática
+        function toggleAutoBattle() {
+            if (autoBattleActive) {
+                stopAutoBattle();
+            } else {
+                startAutoBattle();
+            }
+        }
+        
+        function startAutoBattle() {
+            autoBattleActive = true;
+            $('.auto-btn').html('<i class="fas fa-stop"></i> STOP AUTO');
+            addLog('Auto battle started!', 'system');
+            
+            autoBattleInterval = setInterval(() => {
+                if (!autoBattleActive) return;
+                
+                performAttack();
+            }, 2000); // A cada 2 segundos
+        }
+        
+        function stopAutoBattle() {
+            autoBattleActive = false;
+            clearInterval(autoBattleInterval);
+            $('.auto-btn').html('<i class="fas fa-robot"></i> Auto Battle');
+            addLog('Auto battle stopped.', 'system');
+        }
+        
+        // Processar resultado da batalha
+        function handleBattleResult(result) {
+            if (!result.success) {
+                addLog(result.message || 'Battle failed', 'system');
+                return;
+            }
+            
+            // Adicionar logs
+            if (result.log && result.log.length > 0) {
+                result.log.forEach(log => {
+                    addLog(log.text, log.type);
+                });
+            }
+            
+            // Atualizar jogador
+            if (result.player) {
+                updatePlayerStats(result.player);
+            }
+            
+            // Atualizar monstro
+            if (result.monster_dead) {
+                // Monstro morto
+                addLog('Monster defeated!', 'victory');
+                
+                // Atualizar recompensas
+                if (result.exp_gained) {
+                    addLog(`Gained ${result.exp_gained} EXP and ${result.gold_gained} Gold!`, 'victory');
+                }
+                
+                // Mostrar drops
+                if (result.drops && result.drops.length > 0) {
+                    showDrops(result.drops);
+                }
+                
+                // Verificar se derrotou o boss
+                if (result.boss_defeated) {
+                    addLog('FLOOR BOSS DEFEATED! Floor unlocked!', 'victory');
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 3000);
+                } else {
+                    // Carregar próximo monstro
+                    setTimeout(loadNextMonster, 2000);
+                }
+            } else if (result.monster_hp !== undefined) {
+                // Atualizar HP do monstro
+                updateMonsterHP(result.monster_hp);
+            }
+            
+            // Verificar se jogador morreu
+            if (result.player_dead) {
+                addLog('You were defeated!', 'defeat');
+                stopAutoBattle();
+                setTimeout(() => {
+                    window.location.href = 'town.php?action=hospital';
+                }, 3000);
+            }
+        }
+        
+        // Carregar próximo monstro
+        function loadNextMonster() {
+            $.ajax({
+                url: '../api/battle.php?action=next_monster',
+                method: 'POST',
+                success: function(data) {
+                    try {
+                        const result = JSON.parse(data);
+                        if (result.success) {
+                            currentMonsterNumber = result.monster_number;
+                            $('#current-monster-number').text(currentMonsterNumber);
+                            updateMonsterDisplay(result.monster);
+                            addLog(`Next monster: ${result.monster.name}!`, 'system');
+                        }
+                    } catch (e) {
+                        console.error('Error loading next monster:', e);
+                    }
+                }
+            });
+        }
+        
+        // Selecionar monstro específico
+        function selectMonster(monsterNumber) {
+            if (confirm(`Fight monster #${monsterNumber}?`)) {
+                $.ajax({
+                    url: '../api/battle.php?action=select_monster',
+                    method: 'POST',
+                    data: { monster_number: monsterNumber },
+                    success: function(data) {
+                        try {
+                            const result = JSON.parse(data);
+                            if (result.success) {
+                                currentMonsterNumber = monsterNumber;
+                                $('#current-monster-number').text(currentMonsterNumber);
+                                updateMonsterDisplay(result.monster);
+                                addLog(`Selected monster #${monsterNumber}: ${result.monster.name}`, 'system');
+                            }
+                        } catch (e) {
+                            console.error('Error selecting monster:', e);
+                        }
+                    }
+                });
+            }
+        }
+        
+        // Atualizar exibição do monstro
+        function updateMonsterDisplay(monster) {
+            $('.monster .combatant-name').text(monster.name);
+            $('.monster .combatant-level').text(`Floor ${monster.floor} ${monster.is_boss ? '(BOSS)' : ''}`);
+            
+            // Atualizar HP
+            const hpPercent = (monster.current_hp / monster.max_hp) * 100;
+            $('.monster .hp-bar').css('width', hpPercent + '%');
+            $('.monster .stat-value').first().text(`${monster.current_hp}/${monster.max_hp}`);
+            
+            // Atualizar stats
+            $('.monster .quick-stats').html(`
+                <div>ATK: ${monster.atk} | DEF: ${monster.def}</div>
+                <div>Reward: ${monster.exp} EXP, ${monster.gold} Gold</div>
+            `);
+            
+            // Atualizar estatísticas comparativas
+            $('#monster-atk').text(monster.atk);
+            $('#monster-def').text(monster.def);
+            $('#monster-hp').text(`${monster.current_hp}/${monster.max_hp}`);
+        }
+        
+        // Atualizar stats do jogador
+        function updatePlayerStats(player) {
+            if (player.current_hp !== undefined) {
+                updatePlayerHP(player.current_hp, player.max_hp);
+            }
+            
+            if (player.current_mp !== undefined) {
+                updatePlayerMP(player.current_mp, player.max_mp);
+            }
+            
+            if (player.energy !== undefined) {
+                $('.player .quick-stats').find('div:first-child').text(`Energy: ${player.energy}`);
+            }
+            
+            if (player.exp !== undefined) {
+                // Opcional: mostrar EXP atualizado
+            }
+            
+            if (player.gold !== undefined) {
+                // Opcional: mostrar Gold atualizado
+            }
+            
+            if (player.level_up) {
+                addLog(`LEVEL UP! You are now level ${player.new_level}!`, 'victory');
+            }
+        }
+        
+        function updatePlayerHP(hp, maxHp = <?php echo $player['max_hp']; ?>) {
+            const hpPercent = (hp / maxHp) * 100;
+            $('.player .hp-bar').css('width', hpPercent + '%');
+            $('.player .stat-value').first().text(`${hp}/${maxHp}`);
+            $('#player-hp').text(`${hp}/${maxHp}`);
+            
+            // Animação
+            $('.player .hp-bar').addClass('damage-animation');
+            setTimeout(() => {
+                $('.player .hp-bar').removeClass('damage-animation');
+            }, 300);
+        }
+        
+        function updatePlayerMP(mp, maxMp = <?php echo $player['max_mp']; ?>) {
+            const mpPercent = (mp / maxMp) * 100;
+            $('.player .mp-bar').css('width', mpPercent + '%');
+            $('.player .stat-value').last().text(`${mp}/${maxMp}`);
+        }
+        
+        function updateMonsterHP(hp) {
+            const maxHp = <?php echo $_SESSION['current_monster']['max_hp']; ?>;
+            const hpPercent = (hp / maxHp) * 100;
+            $('.monster .hp-bar').css('width', hpPercent + '%');
+            $('.monster .stat-value').first().text(`${hp}/${maxHp}`);
+            $('#monster-hp').text(`${hp}/${maxHp}`);
+            
+            // Animação
+            $('.monster .hp-bar').addClass('damage-animation');
+            setTimeout(() => {
+                $('.monster .hp-bar').removeClass('damage-animation');
+            }, 300);
+        }
+        
+        // Mostrar drops
+        function showDrops(drops) {
+            if (!drops || drops.length === 0) return;
+            
+            let dropList = 'Items dropped: ';
+            drops.forEach((drop, index) => {
+                dropList += `${drop.name}${index < drops.length - 1 ? ', ' : ''}`;
+            });
+            
+            addLog(dropList, 'loot');
+        }
+        
+        // Adicionar entrada no log
+        function addLog(message, type = 'system') {
+            const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            const entry = $(`
+                <div class="log-entry ${type}">
+                    <span class="log-time">[${time}]</span>
+                    <span class="log-text">${message}</span>
+                </div>
+            `);
+            
+            $('#battleLog').append(entry);
+            
+            // Scroll para baixo
+            const logContainer = $('#battleLog');
+            logContainer.scrollTop(logContainer[0].scrollHeight);
+        }
+        
+        // Mudar de floor
+        function changeFloor(floor) {
+            if (confirm(`Change to floor ${floor}?`)) {
+                $.ajax({
+                    url: '../api/battle.php?action=change_floor',
+                    method: 'POST',
+                    data: { floor: floor },
+                    success: function(data) {
+                        try {
+                            const result = JSON.parse(data);
+                            if (result.success) {
+                                // Reload page to show new floor
+                                location.reload();
+                            }
+                        } catch (e) {
+                            console.error('Error changing floor:', e);
+                        }
+                    }
+                });
+            }
+        }
         
         // Check energy level
         function checkEnergy() {
@@ -486,7 +1107,7 @@ $monster = generateMonster($floor);
                 success: function(data) {
                     try {
                         const result = JSON.parse(data);
-                        if (result.energy < 10) {
+                        if (result.energy < 5) {
                             showLowEnergyWarning(result.energy);
                         }
                     } catch (e) {
@@ -514,28 +1135,8 @@ $monster = generateMonster($floor);
             
             // Remove warning after 10 seconds
             setTimeout(() => {
-                $warning.fadeOut(() => $(this).remove());
+                $warning.fadeOut(() => $warning.remove());
             }, 10000);
-        }
-        
-        // Change floor
-        function changeFloor(floor) {
-            $.ajax({
-                url: '../api/battle.php?action=change_floor',
-                method: 'POST',
-                data: { floor: floor },
-                success: function(data) {
-                    try {
-                        const result = JSON.parse(data);
-                        if (result.success) {
-                            // Reload page to show new floor
-                            location.reload();
-                        }
-                    } catch (e) {
-                        console.error('Error changing floor:', e);
-                    }
-                }
-            });
         }
         
         // Show damage popup
@@ -562,6 +1163,7 @@ $monster = generateMonster($floor);
         // Global helper functions
         window.changeFloor = changeFloor;
         window.showDamagePopup = showDamagePopup;
+        window.selectMonster = selectMonster;
     </script>
 </body>
 </html>
