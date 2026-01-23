@@ -20,6 +20,61 @@ CREATE TABLE users (
     INDEX idx_vip (vip_expire)
 );
 
+-- Tabela de tipos de item
+CREATE TABLE item_types (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    name VARCHAR(50) NOT NULL,
+    slot ENUM('weapon', 'armor', 'helmet', 'gloves', 'boots', 'accessory', 'consumable') NOT NULL,
+    can_equip BOOLEAN DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Tabela de itens (ATUALIZADA COM STATUS)
+CREATE TABLE items (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    name VARCHAR(100) NOT NULL,
+    description TEXT,
+    type_id INT NOT NULL,
+    rarity ENUM('common', 'uncommon', 'rare', 'epic', 'legendary') DEFAULT 'common',
+    floor_available INT DEFAULT 1,
+    price INT DEFAULT 0,
+    sell_price INT DEFAULT 0,
+    max_stack INT DEFAULT 1,
+    drop_rate DECIMAL(5,4) DEFAULT 0.01,
+    
+    -- STATS DO ITEM
+    hp_bonus INT DEFAULT 0,
+    mp_bonus INT DEFAULT 0,
+    atk_bonus INT DEFAULT 0,
+    def_bonus INT DEFAULT 0,
+    agi_bonus INT DEFAULT 0,
+    crit_bonus DECIMAL(5,2) DEFAULT 0,
+    dodge_bonus DECIMAL(5,2) DEFAULT 0,
+    accuracy_bonus DECIMAL(5,2) DEFAULT 0,
+    
+    -- BÔNUS ESPECIAIS
+    damage_type ENUM('physical', 'magical', 'fire', 'ice', 'lightning', 'holy', 'dark') DEFAULT 'physical',
+    elemental_damage INT DEFAULT 0,
+    elemental_resistance DECIMAL(5,2) DEFAULT 0,
+    
+    -- PARA ARMAS
+    weapon_damage_min INT DEFAULT 0,
+    weapon_damage_max INT DEFAULT 0,
+    weapon_speed DECIMAL(5,2) DEFAULT 1.0,
+    
+    -- PARA CONSUMÍVEIS
+    consume_effect VARCHAR(100),
+    consume_value INT DEFAULT 0,
+    consume_duration INT DEFAULT 0,
+    
+    image VARCHAR(255),
+    available BOOLEAN DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (type_id) REFERENCES item_types(id),
+    INDEX idx_type_id (type_id),
+    INDEX idx_rarity (rarity)
+);
+
 -- Characters table
 CREATE TABLE characters (
     id INT PRIMARY KEY AUTO_INCREMENT,
@@ -28,11 +83,11 @@ CREATE TABLE characters (
     class VARCHAR(50) DEFAULT 'Swordsman',
     level INT DEFAULT 1,
     exp INT DEFAULT 0,
-    max_exp INT DEFAULT 100,          -- ADICIONADO
-    hp INT DEFAULT 100,               -- ADICIONADO
+    max_exp INT DEFAULT 100,
+    hp INT DEFAULT 100,
     max_hp INT DEFAULT 100,
     current_hp INT DEFAULT 100,
-    mp INT DEFAULT 50,                -- ADICIONADO
+    mp INT DEFAULT 50,
     max_mp INT DEFAULT 50,
     current_mp INT DEFAULT 50,
     atk INT DEFAULT 10,
@@ -52,50 +107,35 @@ CREATE TABLE characters (
     INDEX idx_class (class)
 );
 
--- Items table
-CREATE TABLE items (
-    id INT PRIMARY KEY,
-    name VARCHAR(100) NOT NULL,
-    type ENUM('weapon', 'armor', 'consumable', 'material', 'skill') NOT NULL,
-    category VARCHAR(50) NULL,
-    rarity ENUM('common', 'uncommon', 'rare', 'epic', 'legendary') DEFAULT 'common',
-    image VARCHAR(100) DEFAULT 'default.png',
-    description TEXT NULL,
-    atk INT DEFAULT 0,
-    def INT DEFAULT 0,
-    hp_bonus INT DEFAULT 0,
-    mp_bonus INT DEFAULT 0,
-    crit_bonus DECIMAL(5,2) DEFAULT 0,
-    agi_bonus INT DEFAULT 0,
-    required_level INT DEFAULT 1,
-    required_class VARCHAR(50) NULL,
-    buy_price INT DEFAULT 0,
-    sell_price INT DEFAULT 0,
-    vip_only BOOLEAN DEFAULT FALSE,
-    drop_rate DECIMAL(5,4) DEFAULT 0.0,
-    floor_available INT DEFAULT 1,
-    max_stack INT DEFAULT 99,
-    effect VARCHAR(50) NULL,
-    effect_value INT DEFAULT 0,
-    INDEX idx_type (type),
-    INDEX idx_rarity (rarity),
-    INDEX idx_vip (vip_only)
-);
-
--- Inventory table
+-- Tabela de inventário (ATUALIZADA)
 CREATE TABLE inventory (
     id INT PRIMARY KEY AUTO_INCREMENT,
     user_id INT NOT NULL,
     item_id INT NOT NULL,
     quantity INT DEFAULT 1,
-    equipped BOOLEAN DEFAULT FALSE,
-    equipped_slot VARCHAR(50) NULL,
-    added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    equipped BOOLEAN DEFAULT 0,
+    durability INT DEFAULT 100,
+    enhancement_level INT DEFAULT 0,
+    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-    FOREIGN KEY (item_id) REFERENCES items(id),
-    UNIQUE KEY unique_item (user_id, item_id),
-    INDEX idx_user_item (user_id, item_id),
+    FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
+    INDEX idx_user_id (user_id),
     INDEX idx_equipped (equipped)
+);
+
+-- Tabela de equipamentos ativos
+CREATE TABLE equipped_items (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    user_id INT NOT NULL,
+    slot ENUM('weapon', 'armor', 'helmet', 'gloves', 'boots', 'accessory1', 'accessory2') NOT NULL,
+    item_id INT,
+    inventory_id INT,
+    equipped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
+    FOREIGN KEY (inventory_id) REFERENCES inventory(id) ON DELETE CASCADE,
+    UNIQUE KEY unique_user_slot (user_id, slot),
+    INDEX idx_user_id (user_id)
 );
 
 -- Shop items table
@@ -160,6 +200,69 @@ CREATE TABLE vip_transactions (
     INDEX idx_user_vip (user_id, transaction_date)
 );
 
+-- Tabela de habilidades (ATUALIZADA COM FÓRMULAS)
+CREATE TABLE skills (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    name VARCHAR(100) NOT NULL,
+    description TEXT,
+    type ENUM('attack', 'heal', 'buff', 'debuff') NOT NULL,
+    
+    -- FÓRMULA DE DANO
+    base_damage INT DEFAULT 0,
+    damage_multiplier DECIMAL(5,2) DEFAULT 1.00,
+    atk_scaling DECIMAL(5,2) DEFAULT 1.00, -- Quanto do ATK do personagem é usado
+    weapon_scaling DECIMAL(5,2) DEFAULT 0.50, -- Quanto do dano da arma é usado
+    
+    -- CUSTOS
+    mp_cost INT DEFAULT 10,
+    hp_cost INT DEFAULT 0,
+    
+    -- CRÍTICO
+    crit_bonus DECIMAL(5,2) DEFAULT 0,
+    crit_multiplier DECIMAL(5,2) DEFAULT 2.00,
+    
+    -- PRECISÃO
+    accuracy INT DEFAULT 95,
+    ignore_defense DECIMAL(5,2) DEFAULT 0, -- % de defesa ignorada
+    
+    -- COOLDOWN
+    cooldown INT DEFAULT 0,
+    
+    -- ELEMENTO
+    element ENUM('physical', 'fire', 'ice', 'lightning', 'holy', 'dark') DEFAULT 'physical',
+    elemental_power DECIMAL(5,2) DEFAULT 0,
+    
+    -- REQUISITOS
+    required_level INT DEFAULT 1,
+    required_class VARCHAR(50),
+    max_level INT DEFAULT 10,
+    
+    -- EFEITOS DE BUFF/DEBUFF
+    buff_stat VARCHAR(50),
+    buff_amount DECIMAL(5,2),
+    buff_duration INT,
+    
+    available BOOLEAN DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_type (type),
+    INDEX idx_required_level (required_level)
+);
+
+-- Tabela de habilidades aprendidas pelos jogadores
+CREATE TABLE user_skills (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    user_id INT NOT NULL,
+    skill_id INT NOT NULL,
+    level INT DEFAULT 1,
+    experience INT DEFAULT 0,
+    unlocked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (skill_id) REFERENCES skills(id) ON DELETE CASCADE,
+    UNIQUE KEY unique_user_skill (user_id, skill_id),
+    INDEX idx_user_id (user_id),
+    INDEX idx_skill_id (skill_id)
+);
+
 -- Battles table
 CREATE TABLE battles (
     id INT PRIMARY KEY AUTO_INCREMENT,
@@ -172,36 +275,6 @@ CREATE TABLE battles (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id),
     INDEX idx_user_battles (user_id, created_at)
-);
-
--- Skills table
-CREATE TABLE skills (
-    id INT PRIMARY KEY,
-    name VARCHAR(100) NOT NULL,
-    type ENUM('attack', 'heal', 'buff', 'debuff') NOT NULL,
-    description TEXT NULL,
-    damage INT DEFAULT 0,
-    heal_amount INT DEFAULT 0,
-    mp_cost INT NOT NULL,
-    cooldown INT DEFAULT 0,
-    effect VARCHAR(50) NULL,
-    effect_value INT DEFAULT 0,
-    required_level INT DEFAULT 1,
-    required_class VARCHAR(50) NULL,
-    vip_only BOOLEAN DEFAULT FALSE,
-    INDEX idx_type (type),
-    INDEX idx_required (required_level)
-);
-
--- Player skills
-CREATE TABLE player_skills (
-    id INT PRIMARY KEY AUTO_INCREMENT,
-    user_id INT NOT NULL,
-    skill_id INT NOT NULL,
-    unlocked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(id),
-    FOREIGN KEY (skill_id) REFERENCES skills(id),
-    UNIQUE KEY unique_skill (user_id, skill_id)
 );
 
 -- Chat messages
@@ -358,41 +431,47 @@ CREATE TABLE system_logs (
 
 -- Insert initial data
 
--- Insert default items
-INSERT INTO items (id, name, type, rarity, image, description, atk, def, required_level, buy_price, sell_price, drop_rate) VALUES
--- Weapons
-(101, 'Bronze Sword', 'weapon', 'common', 'bronze_sword.png', 'A basic bronze sword', 5, 0, 1, 100, 50, 0.3),
-(102, 'Iron Sword', 'weapon', 'uncommon', 'iron_sword.png', 'A sturdy iron sword', 10, 0, 5, 300, 150, 0.15),
-(103, 'Steel Sword', 'weapon', 'rare', 'steel_sword.png', 'A well-crafted steel sword', 20, 2, 10, 800, 400, 0.08),
-(104, 'Crystal Sword', 'weapon', 'epic', 'crystal_sword.png', 'A sword made of magical crystal', 35, 5, 20, 2000, 1000, 0.04),
-(105, 'Dragon Slayer', 'weapon', 'legendary', 'dragon_slayer.png', 'A sword that can slay dragons', 50, 10, 30, 5000, 2500, 0.01),
+-- Inserir tipos básicos
+INSERT INTO item_types (name, slot) VALUES
+('Sword', 'weapon'),
+('Armor', 'armor'),
+('Helmet', 'helmet'),
+('Gloves', 'gloves'),
+('Boots', 'boots'),
+('Ring', 'accessory'),
+('Necklace', 'accessory'),
+('Potion', 'consumable');
 
--- Armor
-(201, 'Leather Armor', 'armor', 'common', 'leather_armor.png', 'Basic leather protection', 0, 5, 1, 150, 75, 0.25),
-(202, 'Chainmail', 'armor', 'uncommon', 'chainmail.png', 'Interlocking metal rings', 0, 12, 5, 400, 200, 0.12),
-(203, 'Plate Armor', 'armor', 'rare', 'plate_armor.png', 'Heavy plate armor', 0, 25, 10, 1000, 500, 0.06),
-(204, 'Magic Robes', 'armor', 'epic', 'magic_robes.png', 'Robes infused with magic', 5, 20, 15, 2500, 1250, 0.03),
-(205, 'Dragon Scale Armor', 'armor', 'legendary', 'dragon_scale.png', 'Armor made from dragon scales', 10, 40, 25, 6000, 3000, 0.01),
+-- Inserir alguns itens de exemplo
+INSERT INTO items (name, description, type_id, rarity, floor_available, price, 
+                   atk_bonus, def_bonus, crit_bonus, weapon_damage_min, weapon_damage_max) VALUES
+('Iron Sword', 'A basic iron sword', 1, 'common', 1, 100, 
+ 5, 0, 1.0, 8, 12),
+('Steel Sword', 'A sturdy steel sword', 1, 'uncommon', 3, 500,
+ 10, 0, 2.0, 15, 20),
+('Leather Armor', 'Basic leather armor', 2, 'common', 1, 80,
+ 0, 8, 0, 0, 0),
+('Chainmail', 'Protective chainmail', 2, 'uncommon', 3, 400,
+ 0, 15, 0, 0, 0),
+('Health Potion', 'Restores 50 HP', 8, 'common', 1, 20,
+ 0, 0, 0, 0, 0),
+('Critical Ring', 'Increases critical chance', 6, 'rare', 5, 1000,
+ 0, 0, 5.0, 0, 0),
+('Dodge Boots', 'Increases dodge chance', 5, 'uncommon', 4, 300,
+ 0, 5, 0, 0, 0);
 
--- Consumables
-(301, 'Small HP Potion', 'consumable', 'common', 'small_hp_potion.png', 'Restores 50 HP', 0, 0, 1, 50, 25, 0.4),
-(302, 'Medium HP Potion', 'consumable', 'uncommon', 'medium_hp_potion.png', 'Restores 100 HP', 0, 0, 5, 100, 50, 0.2),
-(303, 'Large HP Potion', 'consumable', 'rare', 'large_hp_potion.png', 'Restores 200 HP', 0, 0, 10, 200, 100, 0.1),
-(304, 'Small MP Potion', 'consumable', 'common', 'small_mp_potion.png', 'Restores 30 MP', 0, 0, 1, 50, 25, 0.4),
-(305, 'Medium MP Potion', 'consumable', 'uncommon', 'medium_mp_potion.png', 'Restores 60 MP', 0, 0, 5, 100, 50, 0.2),
-
--- Materials
-(401, 'Iron Ore', 'material', 'common', 'iron_ore.png', 'Used for crafting', 0, 0, 1, 10, 5, 0.5),
-(402, 'Silver Ore', 'material', 'uncommon', 'silver_ore.png', 'Used for crafting', 0, 0, 5, 25, 12, 0.3),
-(403, 'Gold Ore', 'material', 'rare', 'gold_ore.png', 'Used for crafting', 0, 0, 10, 50, 25, 0.15),
-(404, 'Diamond', 'material', 'epic', 'diamond.png', 'Rare gemstone', 0, 0, 15, 200, 100, 0.05),
-(405, 'Dragon Scale', 'material', 'legendary', 'dragon_scale_mat.png', 'Scale from a dragon', 0, 0, 20, 500, 250, 0.01),
-
--- VIP Items
-(1001, 'Elucidator', 'weapon', 'legendary', 'elucidator.png', 'The black sword of the Black Swordsman', 50, 15, 20, 50000, 25000, 0.005),
-(1002, 'Dark Repulser', 'weapon', 'legendary', 'dark_repulser.png', 'A sword that repels darkness', 45, 20, 20, 45000, 22500, 0.005),
-(1003, 'Coat of Midnight', 'armor', 'epic', 'midnight_coat.png', 'A black coat that enhances agility', 10, 30, 15, 30000, 15000, 0.01),
-(1004, 'Lambent Light', 'weapon', 'legendary', 'lambent_light.png', 'Asuna rapier', 40, 10, 25, 40000, 20000, 0.005);
+-- Inserir habilidades básicas (nova estrutura)
+INSERT INTO skills (name, description, type, base_damage, mp_cost, crit_bonus, accuracy, required_level) VALUES
+('Slash', 'A basic sword slash', 'attack', 15, 5, 0, 95, 1),
+('Heal', 'Restores HP', 'heal', 20, 10, 0, 100, 1),
+('Power Strike', 'A powerful strike that deals extra damage', 'attack', 25, 15, 5, 90, 3),
+('Defense Boost', 'Increases defense for 3 turns', 'buff', 0, 20, 0, 100, 5),
+('Fireball', 'Launches a fireball at the enemy', 'attack', 30, 25, 10, 85, 7),
+('Greater Heal', 'Restores a large amount of HP', 'heal', 40, 30, 0, 100, 10),
+('Critical Focus', 'Greatly increases critical chance for next attack', 'buff', 0, 35, 0, 100, 12),
+('Lightning Strike', 'A lightning-fast attack with high critical chance', 'attack', 35, 40, 15, 80, 15),
+('Weaken', 'Reduces enemy defense', 'debuff', 0, 25, 0, 90, 8),
+('Dual Slash', 'Two quick slashes in succession', 'attack', 45, 50, 20, 85, 20);
 
 -- Insert VIP plans
 INSERT INTO vip_plans (name, description, duration, price_gold, price_credits, price_cash, features) VALUES
@@ -400,54 +479,28 @@ INSERT INTO vip_plans (name, description, duration, price_gold, price_credits, p
 ('VIP 30 Days', 'Best value for dedicated players', 30, 180000, 1800, 14.99, '["+50% EXP Gain", "+30% Drop Rate", "Access to VIP Shop", "VIP Skills", "No Ads", "Priority Support"]'),
 ('VIP 90 Days', 'Ultimate package for hardcore players', 90, 450000, 4500, 34.99, '["+75% EXP Gain", "+50% Drop Rate", "Access to VIP Shop", "VIP Skills", "Exclusive Items", "Priority Support", "No Ads", "Monthly Gift Box"]');
 
--- Insert skills
-INSERT INTO skills (id, name, type, description, damage, mp_cost, cooldown, required_level) VALUES
-(1, 'Slash', 'attack', 'A basic sword slash', 15, 5, 0, 1),
-(2, 'Heavy Strike', 'attack', 'A powerful strike', 25, 10, 2, 5),
-(3, 'Heal', 'heal', 'Restores HP', 0, 15, 3, 10),
-(4, 'Double Slash', 'attack', 'Two rapid strikes', 20, 12, 2, 15),
-(5, 'Power Attack', 'attack', 'A devastating attack', 40, 25, 5, 20),
-(6, 'Healing Circle', 'heal', 'Heals more HP', 0, 30, 8, 25),
-(7, 'Sword Skills', 'attack', 'Advanced sword techniques', 60, 40, 10, 30),
-(8, 'Dual Blades', 'attack', 'Unleash a flurry of attacks', 80, 50, 15, 35);
-
--- Insert shop items
+-- Insert shop items (usando os novos IDs de itens)
 INSERT INTO shop_items (item_id, category, price_gold, price_credits, stock, vip_only) VALUES
 -- Weapons
-(101, 'weapons', 100, 0, -1, FALSE),
-(102, 'weapons', 300, 0, -1, FALSE),
-(103, 'weapons', 800, 0, -1, FALSE),
-(104, 'weapons', 2000, 0, -1, FALSE),
-(105, 'weapons', 5000, 0, -1, FALSE),
-
+(1, 'weapons', 100, 0, -1, FALSE),
+(2, 'weapons', 500, 0, -1, FALSE),
 -- Armor
-(201, 'armor', 150, 0, -1, FALSE),
-(202, 'armor', 400, 0, -1, FALSE),
-(203, 'armor', 1000, 0, -1, FALSE),
-(204, 'armor', 2500, 0, -1, FALSE),
-(205, 'armor', 6000, 0, -1, FALSE),
-
+(3, 'armor', 80, 0, -1, FALSE),
+(4, 'armor', 400, 0, -1, FALSE),
 -- Consumables
-(301, 'consumables', 50, 0, -1, FALSE),
-(302, 'consumables', 100, 0, -1, FALSE),
-(303, 'consumables', 200, 0, -1, FALSE),
-(304, 'consumables', 50, 0, -1, FALSE),
-(305, 'consumables', 100, 0, -1, FALSE),
-
--- VIP Items
-(1001, 'vip', 0, 5000, -1, TRUE),
-(1002, 'vip', 0, 4500, -1, TRUE),
-(1003, 'vip', 0, 3000, -1, TRUE),
-(1004, 'vip', 0, 4000, -1, TRUE);
+(5, 'consumables', 20, 0, -1, FALSE),
+-- Accessories
+(6, 'accessories', 1000, 0, -1, FALSE),
+(7, 'accessories', 300, 0, -1, FALSE);
 
 -- Insert quests
 INSERT INTO quests (title, description, type, required_level, required_monster, required_monster_count, reward_exp, reward_gold, reward_item_id) VALUES
-('First Steps', 'Defeat 5 Frenzy Boars', 'kill', 1, 'Frenzy Boar', 5, 100, 50, 101),
-('Gathering Materials', 'Collect 10 Iron Ore', 'collect', 2, NULL, NULL, 150, 75, 301),
-('Wolf Hunter', 'Defeat 8 Dire Wolves', 'kill', 3, 'Dire Wolf', 8, 200, 100, 102),
-('Exploring Floor 1', 'Reach level 5', 'level', 1, NULL, NULL, 300, 150, 201),
-('Kobold Extermination', 'Defeat 15 Kobold Sentinels', 'kill', 5, 'Kobold Sentinel', 15, 400, 200, 103),
-('Dragon Slayer', 'Defeat a Lesser Dragon', 'boss', 10, 'Lesser Dragon', 1, 1000, 500, 105);
+('First Steps', 'Defeat 5 Frenzy Boars', 'kill', 1, 'Frenzy Boar', 5, 100, 50, 1),
+('Gathering Materials', 'Collect 10 Iron Ore', 'collect', 2, NULL, NULL, 150, 75, 5),
+('Wolf Hunter', 'Defeat 8 Dire Wolves', 'kill', 3, 'Dire Wolf', 8, 200, 100, 2),
+('Exploring Floor 1', 'Reach level 5', 'level', 1, NULL, NULL, 300, 150, 3),
+('Kobold Extermination', 'Defeat 15 Kobold Sentinels', 'kill', 5, 'Kobold Sentinel', 15, 400, 200, 4),
+('Dragon Slayer', 'Defeat a Lesser Dragon', 'boss', 10, 'Lesser Dragon', 1, 1000, 500, 6);
 
 -- Create admin user (password: admin123)
 INSERT INTO users (username, email, password_hash, vip_expire) VALUES 

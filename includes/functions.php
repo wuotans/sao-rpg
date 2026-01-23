@@ -93,6 +93,97 @@ function getPlayerInfo($user_id) {
     return $player ?: null;
 }
 
+// Obter status totais do jogador (personagem + equipamentos)
+function getPlayerTotalStats($user_id) {
+    $db = Database::getInstance();
+    
+    // Status base do personagem
+    $player = $db->fetch("SELECT * FROM characters WHERE user_id = ?", [$user_id]);
+    if (!$player) return null;
+    
+    // Inicializar status totais
+    $totalStats = [
+        'hp' => $player['max_hp'],
+        'max_hp' => $player['max_hp'],
+        'current_hp' => $player['current_hp'],
+        'mp' => $player['max_mp'],
+        'max_mp' => $player['max_mp'],
+        'current_mp' => $player['current_mp'],
+        'atk' => $player['atk'],
+        'def' => $player['def'],
+        'agi' => $player['agi'],
+        'crit' => $player['crit'],
+        'dodge' => 5.0, // Base 5%
+        'accuracy' => 95.0, // Base 95%
+        'damage_min' => $player['atk'], // Dano mínimo base
+        'damage_max' => $player['atk'] + 5, // Dano máximo base
+        'elemental_resistance' => [
+            'fire' => 0,
+            'ice' => 0,
+            'lightning' => 0,
+            'holy' => 0,
+            'dark' => 0
+        ],
+        'equipped_items' => []
+    ];
+    
+    // Obter itens equipados
+    $equipped = $db->fetchAll("
+        SELECT i.*, ei.slot 
+        FROM equipped_items ei
+        JOIN items i ON ei.item_id = i.id
+        WHERE ei.user_id = ?
+    ", [$user_id]);
+    
+    // Calcular bônus dos equipamentos
+    foreach ($equipped as $item) {
+        $totalStats['equipped_items'][$item['slot']] = $item;
+        
+        // HP/MP
+        $totalStats['max_hp'] += $item['hp_bonus'];
+        $totalStats['max_mp'] += $item['mp_bonus'];
+        $totalStats['hp'] += $item['hp_bonus'];
+        $totalStats['mp'] += $item['mp_bonus'];
+        
+        // Status básicos
+        $totalStats['atk'] += $item['atk_bonus'];
+        $totalStats['def'] += $item['def_bonus'];
+        $totalStats['agi'] += $item['agi_bonus'];
+        $totalStats['crit'] += $item['crit_bonus'];
+        $totalStats['dodge'] += $item['dodge_bonus'];
+        $totalStats['accuracy'] += $item['accuracy_bonus'];
+        
+        // Dano da arma
+        if ($item['weapon_damage_min'] > 0) {
+            $totalStats['damage_min'] = $item['weapon_damage_min'];
+            $totalStats['damage_max'] = $item['weapon_damage_max'];
+        } else {
+            // Para não-armas, adicionar ao dano base
+            $totalStats['damage_min'] += $item['atk_bonus'];
+            $totalStats['damage_max'] += $item['atk_bonus'];
+        }
+        
+        // Resistências elementais
+        if ($item['elemental_resistance'] > 0) {
+            $element = $item['damage_type'];
+            if ($element != 'physical') {
+                $totalStats['elemental_resistance'][$element] += $item['elemental_resistance'];
+            }
+        }
+    }
+    
+    // Ajustar valores máximos
+    $totalStats['crit'] = min(50.0, max(0, $totalStats['crit']));
+    $totalStats['dodge'] = min(40.0, max(0, $totalStats['dodge']));
+    $totalStats['accuracy'] = min(100.0, max(0, $totalStats['accuracy']));
+    
+    // Garantir que HP/MP atuais não excedam máximos
+    $totalStats['current_hp'] = min($totalStats['current_hp'], $totalStats['max_hp']);
+    $totalStats['current_mp'] = min($totalStats['current_mp'], $totalStats['max_mp']);
+    
+    return $totalStats;
+}
+
 // Calculate required exp for level
 function getExpForLevel($level) {
     return round(BASE_EXP * pow(EXP_MULTIPLIER, $level - 1));
@@ -225,6 +316,316 @@ function calculateDamage($attacker_atk, $defender_def, $crit_chance = 5) {
     }
     
     return ['damage' => max(1, $base_damage), 'critical' => false];
+}
+
+// Calcular dano do ataque básico
+function calculateBasicAttackDamage($playerStats, $isCritical = false) {
+    // Dano base da arma ou ATK
+    $minDamage = $playerStats['damage_min'];
+    $maxDamage = $playerStats['damage_max'];
+    
+    // Dano aleatório dentro do range
+    $damage = rand($minDamage, $maxDamage);
+    
+    // Variação adicional (90-110%)
+    $variation = rand(90, 110) / 100;
+    $damage = floor($damage * $variation);
+    
+    // Aplicar crítico
+    if ($isCritical) {
+        $damage = floor($damage * 2.0); // Crítico básico 2x
+    }
+    
+    return max(1, $damage);
+}
+
+// Calcular chance de acerto
+function calculateHitChance($attackerAccuracy, $defenderDodge) {
+    $baseChance = 95.0; // Chance base de acerto
+    $accuracyBonus = $attackerAccuracy - 95.0;
+    $dodgePenalty = $defenderDodge;
+    
+    $hitChance = $baseChance + $accuracyBonus - $dodgePenalty;
+    
+    // Limites
+    $hitChance = max(10, min(100, $hitChance));
+    
+    return $hitChance;
+}
+
+// Calcular redução de dano pela defesa
+function calculateDefenseReduction($damage, $defenderDef, $ignoreDefense = 0) {
+    $effectiveDef = $defenderDef * (1 - ($ignoreDefense / 100));
+    
+    // Fórmula: redução = defesa / (defesa + 100)
+    $reduction = $effectiveDef / ($effectiveDef + 100);
+    $reducedDamage = $damage * (1 - $reduction);
+    
+    return max(1, floor($reducedDamage));
+}
+
+// Calcular chance de crítico (habilidade + personagem)
+function calculateTotalCritChance($skill, $playerStats, $skillLevel = 1) {
+    $playerCrit = $playerStats['crit'] ?? 5.0;
+    $skillCritBonus = $skill['crit_bonus'] ?? 0;
+    
+    // Bônus de nível da habilidade (1% por nível)
+    $levelBonus = ($skillLevel - 1) * 1.0;
+    
+    // Chance total
+    $totalCrit = $playerCrit + $skillCritBonus + $levelBonus;
+    
+    // Limites
+    return min(75.0, max(0, $totalCrit));
+}
+
+// Verificar se acertou
+function checkHit($attackerAccuracy, $defenderDodge) {
+    $hitChance = calculateHitChance($attackerAccuracy, $defenderDodge);
+    return (rand(1, 100) <= $hitChance);
+}
+
+// Verificar se é crítico
+function checkCritical($critChance) {
+    return (rand(1, 100) <= $critChance);
+}
+
+// Calcular dano da habilidade (VERSÃO COMPLETA)
+function calculateSkillDamage($skill, $playerStats, $skillLevel = 1, $isCritical = false) {
+    // Fatores de escala
+    $atkScaling = $skill['atk_scaling'] ?? 1.0;
+    $weaponScaling = $skill['weapon_scaling'] ?? 0.5;
+    $damageMultiplier = $skill['damage_multiplier'] ?? 1.0;
+    
+    // Dano base da habilidade
+    $baseSkillDamage = $skill['base_damage'] ?? 0;
+    
+    // Contribuição do ATK do personagem
+    $atkContribution = $playerStats['atk'] * $atkScaling;
+    
+    // Contribuição da arma (média do dano)
+    $weaponAvgDamage = ($playerStats['damage_min'] + $playerStats['damage_max']) / 2;
+    $weaponContribution = $weaponAvgDamage * $weaponScaling;
+    
+    // Multiplicador de nível (5% por nível)
+    $levelMultiplier = 1 + (($skillLevel - 1) * 0.05);
+    
+    // Calcular dano base
+    $baseDamage = ($baseSkillDamage + $atkContribution + $weaponContribution) * $damageMultiplier * $levelMultiplier;
+    
+    // Variação (80-120%)
+    $variation = rand(80, 120) / 100;
+    $damage = floor($baseDamage * $variation);
+    
+    // Aplicar crítico
+    if ($isCritical) {
+        $critMultiplier = $skill['crit_multiplier'] ?? 2.0;
+        $damage = floor($damage * $critMultiplier);
+    }
+    
+    // Dano elemental
+    if (!empty($skill['element']) && $skill['element'] != 'physical') {
+        $elementalPower = $skill['elemental_power'] ?? 0;
+        if ($elementalPower > 0) {
+            $elementalDamage = floor($damage * ($elementalPower / 100));
+            $damage += $elementalDamage;
+        }
+    }
+    
+    return max(1, $damage);
+}
+
+// Calcular chance de crítico da habilidade (LEGACY - mantida para compatibilidade)
+function calculateSkillCritChanceLegacy($skill, $player, $skillLevel = 1) {
+    $baseCrit = $player['crit'] ?? 5.0;
+    $skillCritBonus = $skill['crit_bonus'] ?? 0;
+    
+    // Bônus de nível da habilidade (1% por nível)
+    $levelBonus = ($skillLevel - 1) * 1.0;
+    
+    // Chance total de crítico
+    $totalCrit = $baseCrit + $skillCritBonus + $levelBonus;
+    
+    // Limitar a 50% no máximo
+    return min(50.0, $totalCrit);
+}
+
+// Calcular custo de MP da habilidade
+function calculateMpCost($skill, $skillLevel = 1) {
+    $baseMpCost = $skill['mp_cost'] ?? 10;
+    
+    // Custo aumenta 10% por nível
+    $levelMultiplier = 1 + (($skillLevel - 1) * 0.1);
+    
+    return floor($baseMpCost * $levelMultiplier);
+}
+
+// Calcular dano real (usada no processamento da batalha) - LEGACY
+function calculateSkillRealDamage($skill, $player, $skillLevel = 1, $isCritical = false) {
+    // Para compatibilidade, usar a nova função com stats simplificados
+    $playerStats = [
+        'atk' => $player['atk'],
+        'damage_min' => $player['atk'],
+        'damage_max' => $player['atk'] + 5
+    ];
+    
+    return calculateSkillDamage($skill, $playerStats, $skillLevel, $isCritical);
+}
+
+// Verificar se acertou (accuracy check)
+function checkAccuracy($skill, $skillLevel = 1) {
+    $baseAccuracy = $skill['accuracy'] ?? 95;
+    
+    // Accuracy aumenta 0.5% por nível
+    $accuracyBonus = ($skillLevel - 1) * 0.5;
+    
+    $totalAccuracy = min(100, $baseAccuracy + $accuracyBonus);
+    
+    return (rand(1, 100) <= $totalAccuracy);
+}
+
+// Obter informações da habilidade para exibição
+function getSkillDisplayInfo($skill, $playerStats, $skillLevel = 1) {
+    // Calcular dano mínimo e máximo
+    $minDamage = calculateSkillDamage($skill, $playerStats, $skillLevel, false);
+    
+    // Para estimar máximo, usar 120% do mínimo (devido à variação)
+    $maxDamage = floor($minDamage * 1.2);
+    
+    // Recalcular com possível crítico para mostrar range
+    $minDamageWithCrit = calculateSkillDamage($skill, $playerStats, $skillLevel, true);
+    $maxDamageWithCrit = floor($minDamageWithCrit * 1.2);
+    
+    // Chance de crítico
+    $critChance = calculateTotalCritChance($skill, $playerStats, $skillLevel);
+    
+    // Custo de MP
+    $mpCost = calculateMpCost($skill, $skillLevel);
+    
+    return [
+        'damage_min' => $minDamage,
+        'damage_max' => $maxDamage,
+        'crit_damage_min' => $minDamageWithCrit,
+        'crit_damage_max' => $maxDamageWithCrit,
+        'crit_chance' => $critChance,
+        'mp_cost' => $mpCost,
+        'accuracy' => $skill['accuracy'] ?? 95,
+        'crit_multiplier' => $skill['crit_multiplier'] ?? 2.0,
+        'description' => $skill['description'],
+        'type' => $skill['type'],
+        'element' => $skill['element'] ?? 'physical'
+    ];
+}
+
+// Equipar item
+function equipItem($user_id, $inventory_id, $slot) {
+    $db = Database::getInstance();
+    
+    // Verificar se item existe no inventário
+    $item = $db->fetch("
+        SELECT i.*, inv.id as inventory_id 
+        FROM inventory inv
+        JOIN items i ON inv.item_id = i.id
+        WHERE inv.id = ? AND inv.user_id = ?
+    ", [$inventory_id, $user_id]);
+    
+    if (!$item) {
+        return ['success' => false, 'message' => 'Item not found in inventory'];
+    }
+    
+    // Verificar tipo do item para slot correto
+    $itemType = $db->fetch("SELECT * FROM item_types WHERE id = ?", [$item['type_id']]);
+    $validSlot = false;
+    
+    switch ($itemType['slot']) {
+        case 'weapon':
+            $validSlot = ($slot == 'weapon');
+            break;
+        case 'armor':
+            $validSlot = ($slot == 'armor');
+            break;
+        case 'helmet':
+            $validSlot = ($slot == 'helmet');
+            break;
+        case 'gloves':
+            $validSlot = ($slot == 'gloves');
+            break;
+        case 'boots':
+            $validSlot = ($slot == 'boots');
+            break;
+        case 'accessory':
+            $validSlot = ($slot == 'accessory1' || $slot == 'accessory2');
+            break;
+    }
+    
+    if (!$validSlot) {
+        return ['success' => false, 'message' => 'Invalid slot for this item type'];
+    }
+    
+    // Desequipar item atual no slot
+    $db->delete('equipped_items', 'user_id = ? AND slot = ?', [$user_id, $slot]);
+    
+    // Equipar novo item
+    $db->insert('equipped_items', [
+        'user_id' => $user_id,
+        'slot' => $slot,
+        'item_id' => $item['id'],
+        'inventory_id' => $inventory_id
+    ]);
+    
+    // Marcar como equipado no inventário
+    $db->update('inventory', ['equipped' => 1], 'id = ?', [$inventory_id]);
+    
+    return ['success' => true, 'message' => 'Item equipped successfully'];
+}
+
+// Desequipar item
+function unequipItem($user_id, $slot) {
+    $db = Database::getInstance();
+    
+    // Obter item equipado
+    $equipped = $db->fetch("
+        SELECT ei.*, inv.id as inventory_id
+        FROM equipped_items ei
+        JOIN inventory inv ON ei.inventory_id = inv.id
+        WHERE ei.user_id = ? AND ei.slot = ?
+    ", [$user_id, $slot]);
+    
+    if (!$equipped) {
+        return ['success' => false, 'message' => 'No item equipped in this slot'];
+    }
+    
+    // Remover do equipado
+    $db->delete('equipped_items', 'id = ?', [$equipped['id']]);
+    
+    // Marcar como não equipado no inventário
+    $db->update('inventory', ['equipped' => 0], 'id = ?', [$equipped['inventory_id']]);
+    
+    return ['success' => true, 'message' => 'Item unequipped successfully'];
+}
+
+// Obter itens equipados
+function getEquippedItems($user_id) {
+    $db = Database::getInstance();
+    
+    return $db->fetchAll("
+        SELECT ei.slot, i.*, it.name as type_name
+        FROM equipped_items ei
+        JOIN items i ON ei.item_id = i.id
+        JOIN item_types it ON i.type_id = it.id
+        WHERE ei.user_id = ?
+        ORDER BY 
+            CASE ei.slot
+                WHEN 'weapon' THEN 1
+                WHEN 'armor' THEN 2
+                WHEN 'helmet' THEN 3
+                WHEN 'gloves' THEN 4
+                WHEN 'boots' THEN 5
+                WHEN 'accessory1' THEN 6
+                WHEN 'accessory2' THEN 7
+                ELSE 8
+            END
+    ", [$user_id]);
 }
 
 // Check if VIP is active
