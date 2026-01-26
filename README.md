@@ -16,14 +16,14 @@
 
 ---
 
-## 🧠 O Conceito
+## O Conceito
 
 **SAO-RPG** é um projeto web inspirado **diretamente no anime Sword Art Online**, recriando a sensação de estar preso em um MMORPG onde:
 
-- ⚔️ Seu personagem **evolui com batalhas reais**
-- 📈 Cada nível conquistado importa
-- 💀 Derrotas têm consequências
-- 🧠 Tudo acontece dentro de um **sistema virtual estilo Aincrad**
+- Seu personagem **evolui com batalhas reais**
+- Cada nível conquistado importa
+- Derrotas têm consequências
+- Tudo acontece dentro de um **sistema virtual estilo Aincrad**
 
 Assim como no anime, **o sistema é o centro de tudo**.
 
@@ -70,19 +70,19 @@ Este projeto é inspirado diretamente nos sistemas vistos em **Sword Art Online*
 
 ---
 
-## 🎮 Funcionalidades do Projeto
+## Funcionalidades do Projeto
 
-- 🔐 Sistema de Login e Registro
-- 🧍 Criação e gerenciamento de personagem
-- 📊 Sistema de status (força, agilidade, vitalidade)
-- ⚔️ Combate RPG
-- 📈 Sistema de níveis
-- 🧠 Backend em PHP
-- 🎨 Interface estilizada com CSS e JavaScript
+- Sistema de Login e Registro
+- Criação e gerenciamento de personagem
+- Sistema de status (força, agilidade, vitalidade)
+- Combate RPG
+- Sistema de níveis
+- Backend em PHP
+- Interface estilizada com CSS e JavaScript
 
 ---
 
-## 🧠 A Experiência SAO
+## A Experiência SAO
 
 > Assim como em Sword Art Online:
 >
@@ -92,7 +92,7 @@ Este projeto é inspirado diretamente nos sistemas vistos em **Sword Art Online*
 
 ---
 
-## 🚀 Como Entrar em Aincrad
+## Como Entrar em Aincrad
 
 ```bash
 git clone https://github.com/wuotans/sao-rpg.git
